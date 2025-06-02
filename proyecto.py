@@ -1,68 +1,51 @@
 import cv2
+from cvzone.HandTrackingModule import HandDetector
+from cvzone.ClassificationModule import Classifier
 import numpy as np
-from tensorflow.keras.models import load_model
-
-model = load_model('proyecto.h5')
-
-labels = ['A', 'B', 'C', 'D', 'del', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-          'M', 'N', 'nothing', 'O', 'P', 'Q', 'R', 'S', 'space', 'T', 'U',
-          'V', 'W', 'X', 'Y', 'Z']
+import math
+import time
 
 cap = cv2.VideoCapture(0)
-
-word = ""
-current_letter = ""
-prev_letter = ""
-confidence_threshold = 0.90
+detector = HandDetector(maxHands = 1)
+classifier = Classifier("model/keras_model.h5", "model/labels.txt")
+offset = 20
+imgSize = 300
+counter = 0
+labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", 
+          "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    frame = cv2.flip(frame, 1)
-
-    x1, y1, x2, y2 = 400, 100, 600, 300
-    roi = frame[y1:y2, x1:x2]
-
-    roi_resized = cv2.resize(roi, (64, 64))
-    roi_normalized = roi_resized / 255.0
-    roi_input = np.expand_dims(roi_normalized, axis=0)
-
-    prediction = model.predict(roi_input)
-    max_prob = np.max(prediction[0])
-    max_index = np.argmax(prediction[0])
-    predicted_label = labels[max_index]
-
-    # Solo si la predicción tiene suficiente confianza
-    if max_prob > confidence_threshold and predicted_label != 'nothing':
-        current_letter = predicted_label
-
-        if current_letter != prev_letter:
-            prev_letter = current_letter
-
-            if current_letter == 'space':
-                word += ' '
-            elif current_letter == 'del':
-                word = word[:-1]
-            else:
-                word += current_letter
-
-    # Dibujar ROI
-    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-
-    # Mostrar letra reconocida
-    cv2.putText(frame, f'Letra: {current_letter.upper()}', (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 2)
-
-    # Mostrar palabra construida
-    cv2.putText(frame, f'Palabra: {word}', (10, 100),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
-
-    cv2.imshow("Reconocimiento de señas", frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+    success, img = cap.read()
+    imgOutput = img.copy()
+    hands, img = detector.findHands(img)
+    if hands:
+        hand = hands[0]
+        x, y, w, h = hand['bbox']
+        imgWhite = np.ones((imgSize, imgSize, 3), np.uint8) * 255
+        imgCrop = img[y - offset: y + h + offset, x - offset: x + w + offset]
+        imgCropShape = imgCrop.shape
+        aspectRatio = h / w
+        if aspectRatio > 1:
+            k = imgSize / h
+            wCal = math.ceil(k * w)
+            imgResize = cv2.resize(imgCrop, (wCal, imgSize))
+            imgResizeShape = imgResize.shape
+            wGap = math.ceil((imgSize - wCal) / 2)
+            imgWhite[:, wGap: wCal + wGap] = imgResize
+            prediction, index = classifier.getPrediction(imgWhite, draw = False)
+            print(prediction, index)
+        else:
+            k = imgSize / w
+            hCal = math.ceil(k * h)
+            imgResize = cv2.resize(imgCrop, (imgSize, hCal))
+            imgResizeShape = imgResize.shape
+            hGap = math.ceil((imgSize - hCal) / 2)
+            imgWhite[hGap: hCal + hGap, :] = imgResize
+            prediction, index = classifier.getPrediction(imgWhite, draw = False)
+        cv2.rectangle(imgOutput, (x - offset, y - offset - 50), (150, 50), (255, 0, 255), cv2.FILLED)
+        cv2.putText(imgOutput, labels[index], (x, y - 20), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 0, 255), 2)
+        cv2.rectangle(imgOutput, (x - offset, y - offset), (x + w + offset, y + h + offset), (255, 0, 255), 4)
+        cv2.imshow("ImageCrop", imgCrop)
+        cv2.imshow("ImgWhite", imgWhite)
+    cv2.imshow("Image", imgOutput)
+    cv2.waitKey(1)
